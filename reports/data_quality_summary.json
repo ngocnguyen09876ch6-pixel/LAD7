@@ -1,0 +1,40 @@
+{
+  "source_directory": "data/dirty/day_2026-07-02",
+  "total": {
+    "input": 480,
+    "valid": 182,
+    "rejected": 298
+  },
+  "datasets": [
+    {
+      "dataset": "customers",
+      "input": 40,
+      "valid": 37,
+      "rejected": 3
+    },
+    {
+      "dataset": "products",
+      "input": 30,
+      "valid": 28,
+      "rejected": 2
+    },
+    {
+      "dataset": "orders",
+      "input": 100,
+      "valid": 10,
+      "rejected": 90
+    },
+    {
+      "dataset": "order_items",
+      "input": 220,
+      "valid": 20,
+      "rejected": 200
+    },
+    {
+      "dataset": "payments",
+      "input": 90,
+      "valid": 87,
+      "rejected": 3
+    }
+  ]
+}

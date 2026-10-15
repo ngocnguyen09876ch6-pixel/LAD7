@@ -1,0 +1,72 @@
+Business Rules Validation Email:
+ Input: 40
+Valid: 39
+Rejected: 1
+  customer_id         email     error_code
+0   CUS000001  not-an-email  INVALID_EMAIL
+
+Business Rules Validation status:
+Input: 40
+Valid: 38
+Rejected: 2
+  customer_id                 email   status      error_code
+0   CUS000001          not-an-email   active   INVALID_EMAIL
+4   CUS000005  user0005@example.com  UNKNOWN  INVALID_STATUS
+
+Business Rules Validation enum :
+Business Rules Validation status:Input: 100
+Valid: 99
+Rejected: 1
+ order_id status channel     error_code
+ORD005002   done     web INVALID_STATUS
+Invariant: True
+
+Business Rules Validation price:
+Input: 30
+Valid: 29
+Rejected: 1
+product_id  unit_price     error_code
+ PRD000001     -1000.0 NEGATIVE_PRICE
+Invariant: True
+
+Business Rules Validation quantity:
+nput: 220
+Valid: 219
+Rejected: 1
+order_item_id  quantity  unit_price       error_code
+  ITM00012718         0   6980000.0 INVALID_QUANTITY
+Invariant: True
+
+
+Business Rules Validation total:
+Input: 100
+Valid: 99
+Rejected: 1
+ order_id  order_total     error_code
+ORD005002    7092000.0 INVALID_STATUS
+Invariant: True
+
+
+Business Rules Validation amount:
+Input: 90
+Valid: 89
+Rejected: 1
+payment_id    amount payment_status             error_code
+ PAY004519 7092000.0           paid INVALID_PAYMENT_STATUS
+Invariant: True
+
+
+Business Rules Validation amount:
+Input: 220
+Valid: 218
+Rejected: 2
+order_item_id  quantity  unit_price  discount_amount        error_code
+  ITM00012718         0   6980000.0              0.0  INVALID_QUANTITY
+  ITM00012720         1   7070000.0             -1.0 NEGATIVE_DISCOUNT
+  Invariant: True
+
+  Business Rules Validation gross :
+Valid: 0
+Rejected: 1
+order_item_id             error_code
+      TEST001 DISCOUNT_EXCEEDS_GROSS

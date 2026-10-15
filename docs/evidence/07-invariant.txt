@@ -1,0 +1,17 @@
+DATA QUALITY INVARIANT CHECK
+Invariant: input = valid + rejected
+Source: data/dirty/day_2026-07-02
+
+customers: 40 = 37 + 3 | PASS
+  Breakdown: schema=1, business=2, integrity=0
+products: 30 = 28 + 2 | PASS
+  Breakdown: schema=0, business=1, integrity=1
+orders: 100 = 10 + 90 | PASS
+  Breakdown: schema=0, business=1, integrity=89
+order_items: 220 = 20 + 200 | PASS
+  Breakdown: schema=0, business=2, integrity=198
+payments: 90 = 87 + 3 | PASS
+  Breakdown: schema=0, business=1, integrity=2
+
+TOTAL: 480 = 182 + 298 | PASS
+ALL INVARIANT CHECKS PASSED
