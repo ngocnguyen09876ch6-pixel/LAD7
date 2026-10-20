@@ -23,7 +23,8 @@ def endpoint(name, page, page_size, updated_after, x_api_key):
 @app.get('/health')
 def health(): return {'status':'ok'}
 
-for path,name in [('customers','customers'),('products','products'),('orders','orders'),('order-items','order-items'),('payments','payments')]:
+# ĐÃ SỬA: Thay đổi order-items thành order_items để khớp với pipeline
+for path,name in [('customers','customers'),('products','products'),('orders','orders'),('order_items','order_items'),('payments','payments')]:
     def make_handler(dataset):
         def handler(page:int=Query(1,ge=1),page_size:int=Query(100,ge=1,le=500),updated_after:str|None=None,x_api_key:str|None=Header(None)):
             return endpoint(dataset,page,page_size,updated_after,x_api_key)

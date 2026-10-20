@@ -1,92 +1,33 @@
-import numpy as np
 import pandas as pd
 
-
 REQUIRED = {
-    "customers": [
-        "customer_id", "full_name", "email", "phone", "city",
-        "customer_segment", "status", "source_system",
-        "created_at", "updated_at",
-    ],
-    "products": [
-        "product_id", "category_id", "product_name",
-        "unit_price", "cost_price", "status", "source_system",
-        "created_at", "updated_at",
-    ],
-    "orders": [
-        "order_id", "customer_id", "order_date", "status",
-        "shipping_city", "channel", "order_total",
-        "source_system", "created_at", "updated_at",
-    ],
-    "order_items": [
-        "order_item_id", "order_id", "product_id", "quantity",
-        "unit_price", "discount_amount", "source_system",
-        "created_at", "updated_at",
-    ],
-    "payments": [
-        "payment_id", "order_id", "payment_date",
-        "payment_method", "payment_status", "amount",
-        "source_system", "created_at", "updated_at",
-    ],
+    'customers': ['customer_id', 'full_name', 'email', 'status'],
+    'products': ['product_id', 'category_id', 'product_name', 'unit_price', 'status'],
+    'orders': ['order_id', 'customer_id', 'order_date', 'status', 'order_total'],
+    'order_items': ['order_item_id', 'order_id', 'product_id', 'quantity', 'unit_price', 'discount_amount'],
+    'payments': ['payment_id', 'order_id', 'payment_date', 'payment_status', 'amount'],
 }
 
-REQUIRED_VALUES = {
-    "customers": ["customer_id", "full_name", "email"],
-    "products": ["product_id", "category_id", "product_name", "unit_price"],
-    "orders": ["order_id", "customer_id", "order_date", "status"],
-    "order_items": [
-        "order_item_id", "order_id", "product_id",
-        "quantity", "unit_price", "discount_amount",
-    ],
-    "payments": [
-        "payment_id", "order_id", "payment_date",
-        "payment_method", "payment_status", "amount",
-    ],
-}
+def validate_schema(name: str, df: pd.DataFrame):
+    """Kiểm tra thiếu cột so với Data Contract."""
+    missing = [c for c in REQUIRED[name] if c not in df.columns]
+    if missing:
+        raise ValueError(f'{name}: missing required columns {missing}')
 
-
-def validate_schema_and_completeness(
-    df,
-    required_cols,
-    required_values,
-):
-    df_out = df.copy()
-
-  
-    missing_cols = set(required_cols) - set(df_out.columns)
-
-    if missing_cols:
-        raise ValueError(
-            f"Missing cols: {sorted(missing_cols)}"
-        )
-
-   
-    values = df_out[required_values]
-
-    missing_value = (
-        values.isna()
-        | values.astype("string")
-            .apply(lambda col: col.str.strip().eq(""))
-    )
-
-    # 3. Tính score theo từng dòng
-    total_required_values = len(required_values)
-
-    if total_required_values == 0:
-        raise ValueError("required_values must not be empty")
-
-    missing_count = missing_value.sum(axis=1)
-
-    df_out["score"] = (
-        (total_required_values - missing_count)
-        / total_required_values
-        * 100
-    ).round(2)
-
-    df_out["errors"] = np.where(
-        missing_value.any(axis=1),
-        "MISSING_REQUIRED",
-        "",
-    )
-
-    return df_out
+def score_rows(name: str, df: pd.DataFrame):
+    """Tính điểm chất lượng từng row (0-100%) và danh sách lỗi."""
+    req_cols = REQUIRED[name]
+    scored_rows = []
+    for _, row in df.iterrows():
+        errors = []
+        valid_count = 0
+        for col in req_cols:
+            val = row.get(col)
+            if pd.isna(val) or (isinstance(val, str) and val.strip() == ''):
+                errors.append(f'MISSING_{col.upper()}')
+            else:
+                valid_count += 1
+        score = int((valid_count / len(req_cols)) * 100)
+        pk_val = row.get(req_cols[0], 'UNKNOWN')
+        scored_rows.append((pk_val, score, errors))
+    return scored_rows

@@ -1,0 +1,5 @@
+kpi,before,after,diff
+total_revenue,55594608500.0,55594608500.0,0.0
+order_count,4517.0,4517.0,0.0
+completed_orders,3513.0,3513.0,0.0
+total_items_sold,15025.0,15025.0,0.0

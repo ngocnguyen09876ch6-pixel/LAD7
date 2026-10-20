@@ -1,286 +1,63 @@
-
-from pathlib import Path
 import pandas as pd
+from sqlalchemy import text
 
+PK = {
+    'categories': 'category_id',
+    'customers': 'customer_id',
+    'products': 'product_id',
+    'orders': 'order_id',
+    'order_items': 'order_item_id',
+    'payments': 'payment_id',
+}
 
-ROOT = Path(__file__).resolve().parents[2]
-REFERENCE_DIR = ROOT / "mock_api" / "data"
+FK_RULES = {
+    'products': [('category_id', 'categories', 'FK_CATEGORY_NOT_FOUND')],
+    'orders': [('customer_id', 'customers', 'FK_CUSTOMER_NOT_FOUND')],
+    'order_items': [
+        ('order_id', 'orders', 'FK_ORDER_NOT_FOUND'),
+        ('product_id', 'products', 'FK_PRODUCT_NOT_FOUND'),
+    ],
+    'payments': [('order_id', 'orders', 'FK_ORDER_NOT_FOUND')],
+}
 
+def split_cross_table_invalid(name: str, df: pd.DataFrame, reference_ids=None, order_dates=None):
+    """Kiểm tra toàn vẹn khóa ngoại (FK) và logic chronology payment_date >= order_date."""
+    reference_ids = dict(reference_ids or {})
+    errors = [[] for _ in range(len(df))]
 
-def load_reference_tables():
-    customers = pd.read_json(
-        REFERENCE_DIR / "customers.json"
-    )
+    # 1. Foreign Key checks
+    for col, parent, code in FK_RULES.get(name, []):
+        allowed = reference_ids.get(parent)
+        if allowed is None:
+            from load.database import engine
+            pk = PK[parent]
+            with engine.connect() as conn:
+                allowed = set(map(str, conn.execute(text(f'SELECT {pk} FROM core.{parent}')).scalars().all()))
+        else:
+            allowed = set(map(str, allowed))
 
-    products = pd.read_json(
-        REFERENCE_DIR / "products.json"
-    )
+        for pos, val in enumerate(df[col].astype(str).tolist()):
+            if val not in allowed:
+                errors[pos].append(code)
 
-    orders = pd.read_json(
-        REFERENCE_DIR / "orders.json"
-    )
+    # 2. Chronology check: payment_date >= order_date
+    if name == 'payments' and 'payment_date' in df.columns:
+        if order_dates is None:
+            from ..database import engine
+            with engine.connect() as conn:
+                rows = conn.execute(text('SELECT order_id, order_date FROM core.orders')).all()
+            order_dates = {str(r[0]): pd.Timestamp(r[1]) for r in rows}
+        
+        for pos, row in enumerate(df.itertuples(index=False)):
+            o_id = str(getattr(row, 'order_id'))
+            p_date = getattr(row, 'payment_date')
+            o_date = order_dates.get(o_id)
+            if o_date is not None and pd.notna(p_date):
+                if pd.Timestamp(p_date) < o_date:
+                    errors[pos].append('PAYMENT_BEFORE_ORDER')
 
-    return {
-        "customers": customers,
-        "products": products,
-        "orders": orders,
-    }
-
-def split_cross_table_invalid(name, df):
-    df_out = df.copy()
-
-    # Tạo cột error_code nếu chưa có
-    if "error_code" not in df_out.columns:
-        df_out["error_code"] = ""
-    else:
-        df_out["error_code"] = (
-            df_out["error_code"]
-            .fillna("")
-            .astype(str)
-        )
-
-    # Đọc các bảng tham chiếu
-    references = load_reference_tables()
-
-    if name == "orders":
-        customer_ids = set(
-            references["customers"]["customer_id"]
-            .dropna()
-            .astype(str)
-            .str.strip()
-        )
-
-        values = (
-            df_out["customer_id"]
-            .astype("string")
-            .str.strip()
-        )
-
-        invalid_customer = (
-            values.isna()
-            | ~values.isin(customer_ids)
-        )
-
-        has_error = df_out["error_code"].ne("")
-        no_error = invalid_customer & ~has_error
-        has_error = invalid_customer & has_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "FK_CUSTOMER_NOT_FOUND"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|FK_CUSTOMER_NOT_FOUND"
-        )
-
-    if name == "order_items":
-
-        order_ids = set(
-            references["orders"]["order_id"]
-            .dropna()
-            .astype(str)
-            .str.strip()
-        )
-
-        order_values = (
-            df_out["order_id"]
-            .astype("string")
-            .str.strip()
-        )
-
-        invalid_order = (
-            order_values.isna()
-            | ~order_values.isin(order_ids)
-        )
-
-        has_error = df_out["error_code"].ne("")
-        no_error = invalid_order & ~has_error
-        has_error = invalid_order & has_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "FK_ORDER_NOT_FOUND"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|FK_ORDER_NOT_FOUND"
-        )
-
-        product_ids = set(
-            references["products"]["product_id"]
-            .dropna()
-            .astype(str)
-            .str.strip()
-        )
-
-        product_values = (
-            df_out["product_id"]
-            .astype("string")
-            .str.strip()
-        )
-
-        invalid_product = (
-            product_values.isna()
-            | ~product_values.isin(product_ids)
-        )
-
-        has_error = df_out["error_code"].ne("")
-        no_error = invalid_product & ~has_error
-        has_error = invalid_product & has_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "FK_PRODUCT_NOT_FOUND"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|FK_PRODUCT_NOT_FOUND"
-        )
-    if name == "payments":
-        order_ids = set(
-            references["orders"]["order_id"]
-            .dropna()
-            .astype(str)
-            .str.strip()
-        )
-
-        values = (
-            df_out["order_id"]
-            .astype("string")
-            .str.strip()
-        )
-
-        invalid_order = (
-            values.isna()
-            | ~values.isin(order_ids)
-        )
-
-        has_existing_error = df_out["error_code"].ne("")
-
-        no_error = invalid_order & ~has_existing_error
-        has_error = invalid_order & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "FK_ORDER_NOT_FOUND"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|FK_ORDER_NOT_FOUND"
-        )
-            # Kiểm tra payment_date >= order_date
-    if name == "payments":
-        # Chuẩn hóa order_id trong bảng tham chiếu
-        order_reference = references["orders"].copy()
-
-        order_reference["order_id"] = (
-            order_reference["order_id"]
-            .astype("string")
-            .str.strip()
-        )
-
-        # Tạo ánh xạ order_id -> order_date
-        order_date_map = (
-            order_reference
-            .dropna(subset=["order_id"])
-            .drop_duplicates(subset=["order_id"])
-            .set_index("order_id")["order_date"]
-        )
-
-        # Lấy ngày đặt hàng tương ứng với từng khoản thanh toán
-        order_values = (
-            df_out["order_id"]
-            .astype("string")
-            .str.strip()
-        )
-
-        order_dates = pd.to_datetime(
-            order_values.map(order_date_map),
-            errors="coerce",
-            utc=True,
-        )
-
-        payment_dates = pd.to_datetime(
-            df_out["payment_date"],
-            errors="coerce",
-            utc=True,
-        )
-
-        # Thanh toán sớm hơn ngày đặt hàng
-        invalid_chronology = (
-            payment_dates.notna()
-            & order_dates.notna()
-            & (payment_dates < order_dates)
-        )
-
-        # Giữ mã lỗi cũ, nối mã mới nếu cần
-        has_existing_error = df_out["error_code"].ne("")
-
-        no_error = invalid_chronology & ~has_existing_error
-        has_error = invalid_chronology & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "PAYMENT_BEFORE_ORDER"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|PAYMENT_BEFORE_ORDER"
-        )
-            # Kiểm tra products.category_id -> categories.category_id
-    if name == "products":
-        # Tạm suy ra category IDs từ products.json
-        category_ids = set(
-            references["products"]["category_id"]
-            .dropna()
-            .astype(str)
-            .str.strip()
-        )
-
-        values = (
-            df_out["category_id"]
-            .astype("string")
-            .str.strip()
-        )
-
-        invalid_category = (
-            values.isna()
-            | ~values.isin(category_ids)
-        )
-
-        has_existing_error = df_out["error_code"].ne("")
-        no_error = invalid_category & ~has_existing_error
-        has_error = invalid_category & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "FK_CATEGORY_NOT_FOUND"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|FK_CATEGORY_NOT_FOUND"
-        )
-
-
-    valid_df = df_out[
-        df_out["error_code"] == ""
-    ].copy()
-
-    rejected_df = df_out[
-        df_out["error_code"] != ""
-    ].copy()
-
-    return valid_df, rejected_df
+    out = df.copy()
+    out['error_code'] = ['|'.join(dict.fromkeys(e)) for e in errors]
+    valid = out[out.error_code == ''].drop(columns='error_code')
+    rejected = out[out.error_code != '']
+    return valid, rejected

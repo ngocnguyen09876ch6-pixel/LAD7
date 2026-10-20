@@ -1,238 +1,91 @@
+import re
 import pandas as pd
-import numpy as np
 
-EMAIL_PATTERN = r'^[^@\s]+@[^@\s]+\.[^@\s]+$'
-ALLOWED_ENUMS = {
-    "customers": {
-        "status": {"active", "inactive"},
+EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+VALID = {
+    'customers': {'status': {'active', 'inactive'}},
+    'products': {'status': {'active', 'inactive', 'discontinued'}},
+    'orders': {
+        'status': {'pending', 'confirmed', 'shipped', 'completed', 'cancelled'},
+        'channel': {'web', 'mobile_app', 'social'},
     },
-    "products": {
-        "status": {"active", "inactive", "discontinued"},
-    },
-    "orders": {
-        "status": {
-            "cancelled",
-            "completed",
-            "confirmed",
-            "pending",
-            "shipped",
-        },
-        "channel": {"mobile_app", "social", "web"},
-    },
-    "payments": {
-        "payment_method": {
-            "bank_transfer",
-            "card",
-            "cash",
-            "e_wallet",
-        },
-        "payment_status": {"failed", "pending", "success"},
+    'payments': {
+        'payment_status': {'pending', 'success', 'failed', 'refunded'},
+        'payment_method': {'cash', 'bank_transfer', 'card', 'e_wallet'},
     },
 }
-def split_valid_invalid(name, df):
-    df_out = df.copy()
-    df_out["error_code"] = ""
 
-    #  Kiểm tra email
-    if name == "customers" and "email" in df_out.columns:
-        email = (
-            df_out["email"]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-        )
+REQUIRED_VALUES = {
+    'customers': ['customer_id', 'full_name', 'email'],
+    'products': ['product_id', 'category_id', 'product_name'],
+    'orders': ['order_id', 'customer_id', 'order_date'],
+    'order_items': ['order_item_id', 'order_id', 'product_id'],
+    'payments': ['payment_id', 'order_id', 'payment_date'],
+}
 
-        invalid_email = ~email.str.match(
-            EMAIL_PATTERN,
-            na=False,
-        )
+def _missing(val):
+    return pd.isna(val) or (isinstance(val, str) and val.strip() == '')
 
-        df_out.loc[
-            invalid_email, "error_code"
-        ] = "INVALID_EMAIL"
+def split_valid_invalid(name: str, df: pd.DataFrame):
+    """Áp dụng row-level rules, trả về (valid_df, rejected_df kèm cột error_code)."""
+    errors = []
+    for _, row in df.iterrows():
+        row_errors = []
 
-    #  Kiểm tra Enum
-    enum_rules = ALLOWED_ENUMS.get(name, {})
+        # 1. Missing required fields
+        for col in REQUIRED_VALUES.get(name, []):
+            if col not in df.columns or _missing(row.get(col)):
+                row_errors.append('MISSING_REQUIRED')
+                break
 
-    for col, allowed_values in enum_rules.items():
-        if col not in df_out.columns:
-            continue
+        # 2. Enum status/channel/method
+        for col, allowed in VALID.get(name, {}).items():
+            if col in df.columns and row.get(col) not in allowed:
+                row_errors.append(f'INVALID_{col.upper()}')
 
-        values = (
-            df_out[col]
-            .astype("string")
-            .str.strip()
-            .str.lower()
-        )
+        # 3. Custom dataset rules
+        if name == 'customers':
+            email = row.get('email')
+            if not isinstance(email, str) or not EMAIL.match(email):
+                row_errors.append('INVALID_EMAIL')
 
-        invalid = ~values.isin(allowed_values)
-        error_code = f"INVALID_{col.upper()}"
+        elif name == 'products':
+            u_price = pd.to_numeric(row.get('unit_price'), errors='coerce')
+            c_price = pd.to_numeric(row.get('cost_price'), errors='coerce')
+            if pd.isna(u_price): row_errors.append('INVALID_UNIT_PRICE')
+            elif u_price < 0: row_errors.append('NEGATIVE_PRICE')
+            if pd.isna(c_price): row_errors.append('INVALID_COST_PRICE')
+            elif c_price < 0: row_errors.append('NEGATIVE_COST_PRICE')
 
-        # Xác định trạng thái lỗi trước khi cập nhật
-        has_existing_error = df_out["error_code"].ne("")
+        elif name == 'orders':
+            total = pd.to_numeric(row.get('order_total'), errors='coerce')
+            if pd.isna(row.get('order_date')): row_errors.append('INVALID_ORDER_DATE')
+            if pd.isna(total): row_errors.append('INVALID_ORDER_TOTAL')
+            elif total < 0: row_errors.append('NEGATIVE_ORDER_TOTAL')
 
-        no_error = invalid & ~has_existing_error
-        has_error = invalid & has_existing_error
+        elif name == 'order_items':
+            qty = pd.to_numeric(row.get('quantity'), errors='coerce')
+            u_price = pd.to_numeric(row.get('unit_price'), errors='coerce')
+            disc = pd.to_numeric(row.get('discount_amount'), errors='coerce')
+            if pd.isna(qty) or qty <= 0: row_errors.append('INVALID_QUANTITY')
+            if pd.isna(u_price): row_errors.append('INVALID_UNIT_PRICE')
+            elif u_price < 0: row_errors.append('NEGATIVE_PRICE')
+            if pd.isna(disc): row_errors.append('INVALID_DISCOUNT')
+            elif disc < 0: row_errors.append('NEGATIVE_DISCOUNT')
+            if pd.notna(qty) and pd.notna(u_price) and pd.notna(disc) and qty > 0 and u_price >= 0:
+                if disc > qty * u_price: row_errors.append('DISCOUNT_EXCEEDS_GROSS')
 
-        # Chưa có lỗi: gán mã lỗi mới
-        df_out.loc[
-            no_error, "error_code"
-        ] = error_code
+        elif name == 'payments':
+            amt = pd.to_numeric(row.get('amount'), errors='coerce')
+            if pd.isna(row.get('payment_date')): row_errors.append('INVALID_PAYMENT_DATE')
+            if pd.isna(amt): row_errors.append('INVALID_AMOUNT')
+            elif amt < 0: row_errors.append('NEGATIVE_AMOUNT')
 
-        # Đã có lỗi: nối thêm mã lỗi
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|"
-            + error_code
-        )
-            # Kiểm tra unit_price >= 0
-    if "unit_price" in df_out.columns:
-        price = pd.to_numeric(
-            df_out["unit_price"],
-            errors="coerce",
-        )
+        errors.append('|'.join(dict.fromkeys(row_errors)))
 
-        invalid_price = price.notna() & (price < 0)
-
-        has_existing_error = df_out["error_code"].ne("")
-
-        no_error = invalid_price & ~has_existing_error
-        has_error = invalid_price & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "NEGATIVE_PRICE"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|NEGATIVE_PRICE"
-        )
-            #  Kiểm tra quantity > 0
-    if "quantity" in df_out.columns:
-        quantity = pd.to_numeric(
-            df_out["quantity"],
-            errors="coerce",
-        )
-
-        invalid_quantity = (
-            quantity.isna() | (quantity <= 0)
-        )
-
-        has_existing_error = df_out["error_code"].ne("")
-
-        no_error = invalid_quantity & ~has_existing_error
-        has_error = invalid_quantity & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "INVALID_QUANTITY"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|INVALID_QUANTITY"
-        )
-            # Kiểm tra order_total >= 0
-    if "order_total" in df_out.columns:
-        total = pd.to_numeric(
-            df_out["order_total"],
-            errors="coerce",
-        )
-
-        invalid_total = total.notna() & (total < 0)
-
-        has_existing_error = df_out["error_code"].ne("")
-
-        no_error = invalid_total & ~has_existing_error
-        has_error = invalid_total & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "NEGATIVE_ORDER_TOTAL"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|NEGATIVE_ORDER_TOTAL"
-        )
-            # Kiểm tra discount_amount >= 0
-    if "discount_amount" in df_out.columns:
-        discount = pd.to_numeric(
-            df_out["discount_amount"],
-            errors="coerce",
-        )
-
-        invalid_discount = discount.notna() & (discount < 0)
-
-        has_existing_error = df_out["error_code"].ne("")
-
-        no_error = invalid_discount & ~has_existing_error
-        has_error = invalid_discount & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "NEGATIVE_DISCOUNT"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|NEGATIVE_DISCOUNT"
-        )
-            # Kiểm tra discount_amount <= quantity * unit_price
-    required_cols = {"quantity", "unit_price", "discount_amount"}
-
-    if required_cols.issubset(df_out.columns):
-        quantity = pd.to_numeric(
-            df_out["quantity"],
-            errors="coerce",
-        )
-        price = pd.to_numeric(
-            df_out["unit_price"],
-            errors="coerce",
-        )
-        discount = pd.to_numeric(
-            df_out["discount_amount"],
-            errors="coerce",
-        )
-
-        gross = quantity * price
-
-        invalid_discount_gross = (
-            quantity.notna()
-            & price.notna()
-            & discount.notna()
-            & (discount > gross)
-        )
-
-        has_existing_error = df_out["error_code"].ne("")
-        no_error = invalid_discount_gross & ~has_existing_error
-        has_error = invalid_discount_gross & has_existing_error
-
-        df_out.loc[
-            no_error, "error_code"
-        ] = "DISCOUNT_EXCEEDS_GROSS"
-
-        df_out.loc[
-            has_error, "error_code"
-        ] = (
-            df_out.loc[has_error, "error_code"]
-            + "|DISCOUNT_EXCEEDS_GROSS"
-        )
-
-    #  Tách valid và rejected
-    valid_df = df_out[
-        df_out["error_code"] == ""
-    ].copy()
-
-    rejected_df = df_out[
-        df_out["error_code"] != ""
-    ].copy()
-
-    return valid_df, rejected_df
+    out = df.copy()
+    out['error_code'] = errors
+    valid = out[out.error_code == ''].drop(columns='error_code')
+    rejected = out[out.error_code != '']
+    return valid, rejected

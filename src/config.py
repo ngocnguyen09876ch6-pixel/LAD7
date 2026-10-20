@@ -18,5 +18,7 @@ class Settings:
     reject_dir: Path = ROOT/"data"/"reject"
     metadata_dir: Path = ROOT/"data"/"metadata"
     report_dir: Path = ROOT/"data"/"report"
+    input_dir: Path = ROOT/"data"/"incremental"/"day_2026-07-01"
+    
 
 SETTINGS = Settings()
